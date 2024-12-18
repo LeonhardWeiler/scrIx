@@ -37,8 +37,8 @@ while true; do
     fi
 done
 
-RAM_SIZE=$(free -h | awk '/^Mem:/ {print $2}')
-RAM_SIZE_MB=$(free -m | awk '/^Mem:/ {print $2}')
+RAM_SIZE=$(awk '/^MemTotal:/ {printf "%.0f\n", $2 / 1024 / 1024}' /proc/meminfo)
+RAM_SIZE_MB=$(awk '/^MemTotal:/ {print $2 / 1024}' /proc/meminfo)
 
 ROOT_SIZE=$(awk "BEGIN {print $DISK_SIZE_MB / 3 / 1024}")
 ROOT_SIZE_MB=$(awk "BEGIN {print $DISK_SIZE_MB / 3}")
@@ -61,14 +61,14 @@ while true; do
         0)
             echo "Überschreibe $DISK mit Nullbytes..."
             dd if=/dev/zero of="$DISK" bs=1M status=progress conv=fsync || {
-                echo "Überschreibung mit Nullbytes abgeschlossen (Speicherplatz möglicherweise erschöpft)."
+                echo "Überschreibung mit Nullbytes abgeschlossen."
             }
             break
             ;;
         1)
             echo "Überschreibe $DISK mit Zufallswerten..."
             dd if=/dev/urandom of="$DISK" bs=1M status=progress conv=fsync || {
-                echo "Überschreibung mit Zufallswerten abgeschlossen (Speicherplatz möglicherweise erschöpft)."
+                echo "Überschreibung mit Zufallswerten abgeschlossen."
             }
             break
             ;;
@@ -124,8 +124,8 @@ while true; do
 
     if validate_size_input "$root_size"; then
         root_size_mb=$(convert_to_mb "$root_size")
-        remaining_size=$((DISK_SIZE - swap_size - root_size))
         remaining_size_mb=$((DISK_SIZE_MB - swap_size_mb - root_size_mb))
+        remaining_size=$remaining_size_mb/1024
 
         if (( remaining_size_mb <= 0 )); then
             echo "Die Root- und Swap-Partitionen überschreiten die Festplattengröße (${DISK_SIZE}G)."
