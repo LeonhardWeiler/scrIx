@@ -38,7 +38,6 @@ echo "Gewählte Festplatte: $DISK (Größe: $DISK_SIZE)"
 
 RAM_SIZE=$(free -h | grep Mem | awk '{print $2}')
 RAM_SIZE_MB=$(echo $RAM_SIZE | sed 's/[A-Za-z]*//g' | awk '{print $1 * 1024}')
-echo "Gesamte RAM-Größe: $RAM_SIZE (in MB: $RAM_SIZE_MB)"
 
 ROOT_SIZE=$DISK_SIZE/3
 ROOT_SIZE_MB=$DISK_SIZE_MB/3
@@ -79,87 +78,77 @@ echo "Setze neues GPT-Label auf $DISK..."
 parted "$DISK" --script mklabel gpt
 echo "Neues GPT-Label gesetzt."
 
-while true; do
-    read -p "Gib die Größe der Swap-Partition in GB oder MB an (z. B. ${RAM_SIZE}G): " swap_size
-
-    size_value=$(echo "$swap_size" | sed 's/[A-Za-z]*//g')
-    unit=$(echo "$swap_size" | grep -o '[MG]$')
-
-    if [[ -z "$swap_size" ]] || ! [[ "$swap_size" =~ ^[0-9]+[MG]$ ]]; then
-        echo "Ungültige Eingabe, bitte eine gültige Größe angeben (z. B. ${RAM_SIZE}G oder ${RAM_SIZE_MB}M)."
-        continue
+validate_size_input() {
+    local input="$1"
+    if [[ -z "$input" ]] || ! [[ "$input" =~ ^[0-9]+[MG]$ ]]; then
+        echo "Ungültige Eingabe. Bitte eine Größe mit einer Zahl gefolgt von 'M' oder 'G' angeben (z.B. 4G oder 2048M)."
+        return 1
     fi
+    return 0
+}
 
+convert_to_mb() {
+    local size="$1"
+    local value="${size%[MG]}"
+    local unit="${size: -1}"
     if [[ "$unit" == "G" ]]; then
-        swap_size_mb=$((size_value * 1024))
+        echo $((value * 1024))
     else
-        swap_size_mb=$size_value
+        echo "$value"
     fi
+}
 
-    if (( swap_size_mb > RAM_SIZE_MB )); then
-        echo "Swap-Partition kann nicht größer als die RAM-Größe sein (${RAM_SIZE_MB} MB)."
-        continue
+while true; do
+    read -p "Gib die Größe der Swap-Partition in G oder M an (z.B. ${RAM_SIZE}G): " swap_size
+
+    if validate_size_input "$swap_size"; then
+        swap_size_mb=$(convert_to_mb "$swap_size")
+        if (( swap_size_mb > RAM_SIZE_MB )); then
+            echo "Swap-Partition kann nicht größer als die RAM-Größe sein (${RAM_SIZE_MB}M)."
+            continue
+        fi
+        if (( swap_size_mb > DISK_SIZE_MB )); then
+            echo "Die Swap-Partition ist größer als der verfügbare Festplattenspeicher (${DISK_SIZE_MB}M)."
+            continue
+        fi
+        break
     fi
-
-    if (( swap_size_mb > DISK_SIZE_MB )); then
-        echo "Die Swap-Partition ist größer als der verfügbare Festplattenspeicher (${DISK_SIZE_MB} MB). Bitte kleinere Werte wählen."
-        continue
-    fi
-
-    break
 done
 
 while true; do
-    read -p "Gib die Größe der Root-Partition an (z. B. ${ROOT_SIZE}G): " root_size
+    read -p "Gib die Größe der Root-Partition in G oder M an (z.B. ${ROOT_SIZE}G): " root_size
 
-    root_value=$(echo "$root_size" | sed 's/[A-Za-z]*//g')
-    root_unit=$(echo "$root_size" | grep -o '[MG]$')
+    if validate_size_input "$root_size"; then
+        root_size_mb=$(convert_to_mb "$root_size")
+        remaining_size_mb=$((DISK_SIZE_MB - swap_size_mb - root_size_mb))
 
-    if [[ -z "$root_size" ]] || ! [[ "$root_size" =~ ^[0-9]+[MG]$ ]]; then
-        echo "Ungültige Eingabe, bitte eine gültige Größe für die Root-Partition angeben (z. B. ${ROOT_SIZE}G)."
-        continue
-    fi
-
-    if [[ "$root_unit" == "G" ]]; then
-        root_size_mb=$((root_value * 1024))
-    else
-        root_size_mb=$root_value
-    fi
-
-    remaining_size_mb=$((DISK_SIZE_MB - swap_size_mb - root_size_mb))
-
-    if (( remaining_size_mb <= 0 )); then
-        echo "Die Root- und Swap-Partitionen überschreiten bereits die Festplattengröße (${DISK_SIZE_MB} MB)."
-        continue
-    fi
-
-    read -p "Gib die Größe der Home-Partition an (z. B. 100G oder 'default' für verbleibende ${remaining_size_mb}MB): " home_size
-
-    if [[ "$home_size" == "default" ]]; then
-        home_size_mb=$remaining_size_mb
-    else
-        home_value=$(echo "$home_size" | sed 's/[A-Za-z]*//g')
-        home_unit=$(echo "$home_size" | grep -o '[MG]$')
-
-        if [[ -z "$home_size" ]] || ! [[ "$home_size" =~ ^[0-9]+[MG]$ ]]; then
-            echo "Ungültige Eingabe, bitte eine gültige Größe für die Home-Partition angeben."
+        if (( remaining_size_mb <= 0 )); then
+            echo "Die Root- und Swap-Partitionen überschreiten die Festplattengröße (${DISK_SIZE_MB}M)."
             continue
         fi
 
-        if [[ "$home_unit" == "G" ]]; then
-            home_size_mb=$((home_value * 1024))
-        else
-            home_size_mb=$home_value
-        fi
-    fi
+        while true; do
+            read -p "Gib die Größe der Home-Partition in G oder M an oder 'default' für verbleibende ${remaining_size_mb}M: " home_size
 
-    total_size_mb=$((swap_size_mb + root_size_mb + home_size_mb))
-    if (( total_size_mb > DISK_SIZE_MB )); then
-        echo "Die Gesamtgröße der Partitionen ($total_size_mb MB) überschreitet die Festplattengröße (${DISK_SIZE_MB} MB)."
-        continue
-    fi
+            if [[ "$home_size" == "default" ]]; then
+                home_size_mb=$remaining_size_mb
+            else
+                if validate_size_input "$home_size"; then
+                    home_size_mb=$(convert_to_mb "$home_size")
+                else
+                    continue
+                fi
+            fi
 
-    break
+            total_size_mb=$((swap_size_mb + root_size_mb + home_size_mb))
+            if (( total_size_mb > DISK_SIZE_MB )); then
+                echo "Die Gesamtgröße der Partitionen (${total_size_mb}M) überschreitet die Festplattengröße (${DISK_SIZE_MB}M)."
+                continue
+            fi
+            break
+        done
+        break
+    fi
 done
 
 echo "Partitionierung erfolgreich:"
