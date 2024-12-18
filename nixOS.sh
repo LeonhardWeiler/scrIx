@@ -162,57 +162,67 @@ while true; do
 done
 
 echo "Partitionierung erfolgreich:"
-echo "  Swap-Partition: ${swap_size_mb} MB"
-echo "  Root-Partition: ${root_size_mb} MB"
-echo "  Home-Partition: ${home_size_mb} MB"
+echo "  Swap-Partition: ${swap_size_mb}MB"
+echo "  Root-Partition: ${root_size_mb}MB"
+echo "  Home-Partition: ${home_size_mb}MB"
 
-read -sp "LUKS-Passwort eingeben: " luks_password
-echo
-read -sp "LUKS-Passwort erneut eingeben: " luks_password_confirm
-echo
+while true; do
+    read -sp "LUKS-Passwort eingeben: " luks_password
+    echo
+    read -sp "LUKS-Passwort erneut eingeben: " luks_password_confirm
+    echo
 
-if [[ "$luks_password" != "$luks_password_confirm" ]]; then
-    echo "Die eingegebenen Passwörter stimmen nicht überein. Abbruch."
-    exit 1
-fi
+    if [[ "$luks_password" == "$luks_password_confirm" ]]; then
+        break
+    else
+        echo "Die eingegebenen Passwörter stimmen nicht überein. Bitte erneut versuchen."
+    fi
+done
 
 echo "Partitioniere $DISK mit GPT..."
-parted "$DISK" -- mkpart ESP fat32 1MiB 1025MiB
-parted "$DISK" -- set 1 esp on
-parted "$DISK" -- name 1 EFI
-parted "$DISK" -- mkpart primary 1025MiB 100%
-parted "$DISK" -- name 2 LUKS
+parted "$DISK" --script mklabel gpt || { echo "Fehler beim Erstellen des GPT-Labels."; exit 1; }
+parted "$DISK" --script mkpart ESP fat32 1MiB 1025MiB
+parted "$DISK" --script set 1 esp on
+parted "$DISK" --script name 1 EFI
+parted "$DISK" --script mkpart primary 1025MiB 100%
+parted "$DISK" --script name 2 LUKS
 
 EFI_PART="${DISK}${PART_SUFFIX}1"
-echo "Formatiere EFI-Partition ($EFI_PART)..."
-mkfs.fat -F32 -n EFI "$EFI_PART"
-
 LUKS_PART="${DISK}${PART_SUFFIX}2"
+
+echo "Formatiere EFI-Partition ($EFI_PART)..."
+mkfs.fat -F32 -n EFI "$EFI_PART" || { echo "Fehler beim Formatieren der EFI-Partition."; exit 1; }
+
 echo "Erstelle und öffne LUKS-Partition ($LUKS_PART)..."
-cryptsetup luksFormat --type luks2 "$LUKS_PART"
-cryptsetup open "$LUKS_PART" cryptroot
+echo -n "$luks_password" | cryptsetup luksFormat --type luks2 "$LUKS_PART" --key-file -
+echo -n "$luks_password" | cryptsetup open "$LUKS_PART" cryptroot --key-file -
 
 echo "Erstelle LVM-Volumes..."
-pvcreate /dev/mapper/cryptroot
-vgcreate vg /dev/mapper/cryptroot
-lvcreate -L $swap_size_mb -n swap vg
-lvcreate -L $root_size_mb -n root vg
-lvcreate -l $home_size_mb -n home vg
+pvcreate /dev/mapper/cryptroot || { echo "Fehler beim Erstellen von Physical Volume."; exit 1; }
+vgcreate vg /dev/mapper/cryptroot || { echo "Fehler beim Erstellen von Volume Group."; exit 1; }
+lvcreate -L "${swap_size_mb}M" -n swap vg || { echo "Fehler beim Erstellen des Swap-Volumes."; exit 1; }
+lvcreate -L "${root_size_mb}M" -n root vg || { echo "Fehler beim Erstellen des Root-Volumes."; exit 1; }
+
+if [[ "$home_size" == "default" ]]; then
+    lvcreate -l 100%FREE -n home vg || { echo "Fehler beim Erstellen der Home-Partition."; exit 1; }
+else
+    lvcreate -L "${home_size_mb}M" -n home vg || { echo "Fehler beim Erstellen der Home-Partition."; exit 1; }
+fi
 
 echo "Formatiere Dateisysteme..."
-mkfs.ext4 -L ROOT /dev/vg/root
-mkfs.ext4 -L HOME /dev/vg/home
-mkswap --label SWAP /dev/vg/swap
+mkfs.ext4 -L ROOT /dev/vg/root || { echo "Fehler beim Formatieren des Root-Dateisystems."; exit 1; }
+mkfs.ext4 -L HOME /dev/vg/home || { echo "Fehler beim Formatieren des Home-Dateisystems."; exit 1; }
+mkswap --label SWAP /dev/vg/swap || { echo "Fehler beim Formatieren des Swap-Volumes."; exit 1; }
 
 echo "Mounten der Dateisysteme..."
-swapon /dev/vg/swap
-mount LABEL=ROOT /mnt
-mkdir /mnt/home
-mount LABEL=HOME /mnt/home
+swapon /dev/vg/swap || { echo "Fehler beim Aktivieren des Swap."; exit 1; }
+mount LABEL=ROOT /mnt || { echo "Fehler beim Mounten der Root-Partition."; exit 1; }
+mkdir -p /mnt/home
+mount LABEL=HOME /mnt/home || { echo "Fehler beim Mounten der Home-Partition."; exit 1; }
 mkdir -p /mnt/boot
-mount "$EFI_PART" /mnt/boot
+mount "$EFI_PART" /mnt/boot || { echo "Fehler beim Mounten der EFI-Partition."; exit 1; }
 
 echo "Generiere NixOS-Konfiguration..."
-nixos-generate-config --root /mnt
+nixos-generate-config --root /mnt || { echo "Fehler beim Generieren der NixOS-Konfiguration."; exit 1; }
 
 echo "Skript abgeschlossen. Bitte die Konfiguration in /mnt/etc/nixos/configuration.nix anpassen und 'nixos-install' ausführen."
