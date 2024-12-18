@@ -38,11 +38,11 @@ while true; do
 done
 
 RAM_SIZE=$(awk '/^MemTotal:/ {printf "%.0f\n", $2 / 1024 / 1024}' /proc/meminfo)
-SWAP_SIZE=((RAM_SIZE / 2))
+SWAP_SIZE=$((RAM_SIZE / 2))
 RAM_SIZE_MB=$(awk '/^MemTotal:/ {print $2 / 1024}' /proc/meminfo)
 
-ROOT_SIZE=$(awk "BEGIN {print $DISK_SIZE_MB / 3 / 1024}")
-ROOT_SIZE_MB=$(awk "BEGIN {print $DISK_SIZE_MB / 3}")
+ROOT_SIZE=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3 / 1024) + 0.5)}")
+ROOT_SIZE_MB=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3) + 0.5)}")
 
 if [[ $DISK =~ nvme[0-9]n[0-9]$ ]]; then
     PART_SUFFIX="p"
