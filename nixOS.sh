@@ -125,7 +125,7 @@ while true; do
     if validate_size_input "$root_size"; then
         root_size_mb=$(convert_to_mb "$root_size")
         remaining_size_mb=$((DISK_SIZE_MB - swap_size_mb - root_size_mb))
-        remaining_size=$remaining_size_mb/1024
+        remaining_size_gb=$((remaining_size_mb / 1024))
 
         if (( remaining_size_mb <= 0 )); then
             echo "Die Root- und Swap-Partitionen überschreiten die Festplattengröße (${DISK_SIZE}G)."
@@ -158,9 +158,9 @@ while true; do
 done
 
 echo "Partitionierung erfolgreich:"
-echo "  Swap-Partition: ${swap_size}G"
-echo "  Root-Partition: ${root_size}G"
-echo "  Home-Partition: ${home_size}G"
+echo "  Swap-Partition: ${swap_size}"
+echo "  Root-Partition: ${root_size}"
+echo "  Home-Partition: ${home_size}"
 
 while true; do
     read -sp "LUKS-Passwort eingeben: " luks_password
