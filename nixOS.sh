@@ -38,18 +38,44 @@ fi
 DISK="/dev/${DISKS[$disk_choice]}"
 echo "Gewählte Festplatte: $DISK"
 
-# Benutzerwarnung vor Datenverlust
-read -p "WARNUNG: ALLE DATEN AUF $DISK WERDEN GELÖSCHT. Fortfahren? (y/n): " confirm
-if [[ "$confirm" != "y" ]]; then
-    echo "Installation abgebrochen."
-    exit 1
+# Suffix für Partitionen bestimmen
+if [[ $DISK =~ nvme[0-9]n[0-9]$ ]]; then
+    PART_SUFFIX="p"  # NVMe verwendet "p" für Partitionen (z. B. nvme0n1p1)
+else
+    PART_SUFFIX=""   # SATA und Virtio verwenden keinen zusätzlichen Suffix (z. B. sda1)
 fi
 
-# Alte Partitionen entfernen
-echo "Entferne vorhandene Partitionen auf $DISK..."
-wipefs -a "$DISK"
+# Benutzerwarnung vor Datenverlust und Auswahl der Überschreibungsmethode
+echo "WARNUNG: ALLE DATEN AUF $DISK WERDEN GELÖSCHT."
+echo "Methode der Überschreibung wählen:"
+echo "0) Mit Nullbytes überschreiben (schnell)"
+echo "1) Mit Zufallswerten überschreiben (sicher, aber langsam)"
+echo "n) Abbrechen"
+
+read -p "Eingabe: " wipe_choice
+case "$wipe_choice" in
+    0)
+        echo "Überschreibe $DISK mit Nullbytes..."
+        dd if=/dev/zero of="$DISK" bs=1M status=progress
+        ;;
+    1)
+        echo "Überschreibe $DISK mit Zufallswerten..."
+        dd if=/dev/urandom of="$DISK" bs=1M status=progress
+        ;;
+    n)
+        echo "Installation abgebrochen."
+        exit 1
+        ;;
+    *)
+        echo "Ungültige Eingabe. Abbruch."
+        exit 1
+        ;;
+esac
+
+# Neues GPT-Label setzen
+echo "Setze neues GPT-Label auf $DISK..."
 parted "$DISK" --script mklabel gpt
-echo "Partitionen gelöscht und neues GPT-Label gesetzt."
+echo "Neues GPT-Label gesetzt."
 
 # LUKS-Passwort abfragen
 read -sp "LUKS-Passwort eingeben: " luks_password
@@ -71,13 +97,15 @@ parted "$DISK" -- mkpart primary 1025MiB 100%
 parted "$DISK" -- name 2 LUKS
 
 # EFI-Partition formatieren
-echo "Formatiere EFI-Partition..."
-mkfs.fat -F32 -n EFI "${DISK}p1"
+EFI_PART="${DISK}${PART_SUFFIX}1"
+echo "Formatiere EFI-Partition ($EFI_PART)..."
+mkfs.fat -F32 -n EFI "$EFI_PART"
 
 # LUKS-Partition einrichten
-echo "Erstelle und öffne LUKS-Partition..."
-echo -n "$luks_password" | cryptsetup luksFormat --type luks2 --label CRYPT --cipher aes-xts-plain64 --key-size 512 --hash sha512 "${DISK}p2" -
-echo -n "$luks_password" | cryptsetup open "${DISK}p2" cryptroot -
+LUKS_PART="${DISK}${PART_SUFFIX}2"
+echo "Erstelle und öffne LUKS-Partition ($LUKS_PART)..."
+cryptsetup luksFormat --type luks2 "$LUKS_PART"
+cryptsetup open "$LUKS_PART" cryptroot
 
 # LVM einrichten
 echo "Erstelle LVM-Volumes..."
@@ -100,7 +128,7 @@ mount LABEL=ROOT /mnt
 mkdir /mnt/home
 mount LABEL=HOME /mnt/home
 mkdir -p /mnt/boot
-mount /dev/disk/by-label/EFI /mnt/boot
+mount "$EFI_PART" /mnt/boot
 
 # NixOS-Konfiguration generieren
 echo "Generiere NixOS-Konfiguration..."
