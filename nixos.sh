@@ -61,7 +61,8 @@ while true; do
     case "$wipe_choice" in
         0)
             echo "Überschreibe $DISK mit Nullbytes..."
-            if dd if=/dev/zero of="$DISK" bs=1M status=progress conv=fsync; then
+            dd if=/dev/zero of="$DISK" bs=1M status=progress conv=fsync 2>/dev/null
+            if [ $? -eq 0 ]; then
                 echo "Überschreibung mit Nullbytes abgeschlossen."
             else
                 echo "Fehler beim Überschreiben mit Nullbytes."
@@ -70,7 +71,8 @@ while true; do
             ;;
         1)
             echo "Überschreibe $DISK mit Zufallswerten..."
-            if dd if=/dev/urandom of="$DISK" bs=1M status=progress conv=fsync; then
+            dd if=/dev/urandom of="$DISK" bs=1M status=progress conv=fsync 2>/dev/null
+            if [ $? -eq 0 ]; then
                 echo "Überschreibung mit Zufallswerten abgeschlossen."
             else
                 echo "Fehler beim Überschreiben mit Zufallswerten."
@@ -150,8 +152,8 @@ while true; do
                 fi
             fi
 
-            total_size_mb=$(echo $swap_size_mb + $root_size_mb + $home_size_mb | bc | awk '{print int($1 + 0.5)}')
-            total_size=$(echo "$swap_size_mb + $root_size + $home_size" | bc | awk '{print int($1 + 0.5)}')
+            total_size_mb=$(awk "BEGIN {print $swap_size_mb + $root_size_mb + $home_size_mb}")
+            total_size=$(awk "BEGIN {print $swap_size_mb + $root_size + $home_size}")
             if (( total_size_mb > DISK_SIZE_MB )); then
                 echo "Die Gesamtgröße der Partitionen (${total_size}G) überschreitet die Festplattengröße (${DISK_SIZE}G)."
                 continue
