@@ -103,16 +103,16 @@ convert_to_mb() {
 }
 
 while true; do
-    read -p "Gib die Größe der Swap-Partition in G oder M an (z.B. ${RAM_SIZE}G): " swap_size
+    read -p "Gib die Größe der Swap-Partition in 'G' oder 'M' an (z.B. ${RAM_SIZE}G): " swap_size
 
     if validate_size_input "$swap_size"; then
         swap_size_mb=$(convert_to_mb "$swap_size")
         if (( swap_size_mb > RAM_SIZE_MB )); then
-            echo "Swap-Partition kann nicht größer als die RAM-Größe sein (${RAM_SIZE_MB}M)."
+            echo "Swap-Partition kann nicht größer als die RAM-Größe sein (${RAM_SIZE}G)."
             continue
         fi
         if (( swap_size_mb > DISK_SIZE_MB )); then
-            echo "Die Swap-Partition ist größer als der verfügbare Festplattenspeicher (${DISK_SIZE_MB}M)."
+            echo "Die Swap-Partition ist größer als der verfügbare Festplattenspeicher (${DISK_SIZE}G)."
             continue
         fi
         break
@@ -120,19 +120,20 @@ while true; do
 done
 
 while true; do
-    read -p "Gib die Größe der Root-Partition in G oder M an (z.B. ${ROOT_SIZE}G): " root_size
+    read -p "Gib die Größe der Root-Partition in 'G' oder 'M' an (z.B. ${ROOT_SIZE}G): " root_size
 
     if validate_size_input "$root_size"; then
         root_size_mb=$(convert_to_mb "$root_size")
+        remaining_size=$((DISK_SIZE - swap_size - root_size))
         remaining_size_mb=$((DISK_SIZE_MB - swap_size_mb - root_size_mb))
 
         if (( remaining_size_mb <= 0 )); then
-            echo "Die Root- und Swap-Partitionen überschreiten die Festplattengröße (${DISK_SIZE_MB}M)."
+            echo "Die Root- und Swap-Partitionen überschreiten die Festplattengröße (${DISK_SIZE}G)."
             continue
         fi
 
         while true; do
-            read -p "Gib die Größe der Home-Partition in G oder M an oder 'default' für verbleibende ${remaining_size_mb}M: " home_size
+            read -p "Gib die Größe der Home-Partition in 'G' oder 'M' an oder 'default' für verbleibende ${remaining_size}G: " home_size
 
             if [[ "$home_size" == "default" ]]; then
                 home_size_mb=$remaining_size_mb
@@ -145,8 +146,9 @@ while true; do
             fi
 
             total_size_mb=$((swap_size_mb + root_size_mb + home_size_mb))
+            total_size=$((swap_size + root_size + home_size))
             if (( total_size_mb > DISK_SIZE_MB )); then
-                echo "Die Gesamtgröße der Partitionen (${total_size_mb}M) überschreitet die Festplattengröße (${DISK_SIZE_MB}M)."
+                echo "Die Gesamtgröße der Partitionen (${total_size}G) überschreitet die Festplattengröße (${DISK_SIZE}G)."
                 continue
             fi
             break
@@ -156,9 +158,9 @@ while true; do
 done
 
 echo "Partitionierung erfolgreich:"
-echo "  Swap-Partition: ${swap_size_mb}MB"
-echo "  Root-Partition: ${root_size_mb}MB"
-echo "  Home-Partition: ${home_size_mb}MB"
+echo "  Swap-Partition: ${swap_size}G"
+echo "  Root-Partition: ${root_size}G"
+echo "  Home-Partition: ${home_size}G"
 
 while true; do
     read -sp "LUKS-Passwort eingeben: " luks_password
