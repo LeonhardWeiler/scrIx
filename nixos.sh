@@ -38,6 +38,7 @@ while true; do
 done
 
 RAM_SIZE=$(awk '/^MemTotal:/ {printf "%.0f\n", $2 / 1024 / 1024}' /proc/meminfo)
+SWAP_SIZE=(($RAM_SIZE / 2))
 RAM_SIZE_MB=$(awk '/^MemTotal:/ {print $2 / 1024}' /proc/meminfo)
 
 ROOT_SIZE=$(awk "BEGIN {print $DISK_SIZE_MB / 3 / 1024}")
@@ -103,7 +104,7 @@ convert_to_mb() {
 }
 
 while true; do
-    read -p "Gib die Größe der Swap-Partition in 'G' oder 'M' an (z.B. ${RAM_SIZE}G): " swap_size
+    read -p "Gib die Größe der Swap-Partition in 'G' oder 'M' an (z.B. ${SWAP_SIZE}G): " swap_size
 
     if validate_size_input "$swap_size"; then
         swap_size_mb=$(convert_to_mb "$swap_size")
@@ -133,7 +134,7 @@ while true; do
         fi
 
         while true; do
-            read -p "Gib die Größe der Home-Partition in 'G' oder 'M' an oder 'default' für verbleibende ${remaining_size}G: " home_size
+            read -p "Gib die Größe der Home-Partition in 'G' oder 'M' an oder 'default' für verbleibende ${remaining_size_gb}G: " home_size
 
             if [[ "$home_size" == "default" ]]; then
                 home_size_mb=$remaining_size_mb
