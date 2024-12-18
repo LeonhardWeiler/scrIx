@@ -63,11 +63,11 @@ read -p "Eingabe: " wipe_choice
 case "$wipe_choice" in
     0)
         echo "Überschreibe $DISK mit Nullbytes..."
-        dd if=/dev/zero of="$DISK" bs=1M status=progress
+        dd if=/dev/zero of="$DISK" bs=1M status=progress || true
         ;;
     1)
         echo "Überschreibe $DISK mit Zufallswerten..."
-        dd if=/dev/urandom of="$DISK" bs=1M status=progress
+        dd if=/dev/urandom of="$DISK" bs=1M status=progress || true
         ;;
     n)
         echo "Installation abgebrochen."
