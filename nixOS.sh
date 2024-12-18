@@ -16,33 +16,26 @@ fi
 
 echo "UEFI-Umgebung erkannt. Fortsetzung..."
 
-# WLAN-Setup (optional)
-read -p "WLAN verwenden? (y/n): " use_wifi
-if [[ "$use_wifi" == "y" ]]; then
-    echo "WLAN-Setup wird gestartet..."
-    systemctl start wpa_supplicant
-    wpa_cli <<EOF
-add_network
-set_network 0 ssid "$(read -p 'SSID: ' ssid && echo $ssid)"
-set_network 0 psk "$(read -sp 'Passwort: ' psk && echo $psk)"
-enable_network 0
-quit
-EOF
-    echo "WLAN konfiguriert."
-fi
-
 # Festplatten erkennen und zur Auswahl anzeigen
 echo "Verfügbare Festplatten:"
-lsblk -d -n -o NAME,SIZE,TYPE | grep disk
+DISKS=($(lsblk -d -n -o NAME | grep -v loop))
+for i in "${!DISKS[@]}"; do
+    echo "$i) ${DISKS[$i]} ($(lsblk -d -n -o SIZE /dev/${DISKS[$i]}))"
+done
 
-read -p "Gib die Festplatte an, auf der NixOS installiert werden soll (z.B. 'sda', 'nvme0n1'): " DISK
-DISK="/dev/$DISK"
-
-if [[ ! -b "$DISK" ]]; then
-    echo "Ungültige Festplatte: $DISK. Abbruch."
+read -p "Wähle die Festplatte aus (Zahl eingeben, n für Abbruch): " disk_choice
+if [[ "$disk_choice" == "n" ]]; then
+    echo "Installation abgebrochen."
     exit 1
 fi
 
+# Prüfen, ob die Auswahl gültig ist
+if ! [[ "$disk_choice" =~ ^[0-9]+$ ]] || [[ "$disk_choice" -ge "${#DISKS[@]}" ]]; then
+    echo "Ungültige Auswahl. Abbruch."
+    exit 1
+fi
+
+DISK="/dev/${DISKS[$disk_choice]}"
 echo "Gewählte Festplatte: $DISK"
 
 # Benutzerwarnung vor Datenverlust
