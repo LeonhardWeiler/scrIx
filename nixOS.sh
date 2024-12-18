@@ -36,7 +36,14 @@ if ! [[ "$disk_choice" =~ ^[0-9]+$ ]] || [[ "$disk_choice" -ge "${#DISKS[@]}" ]]
 fi
 
 DISK="/dev/${DISKS[$disk_choice]}"
-echo "Gewählte Festplatte: $DISK"
+DISK_SIZE=$(lsblk -d -n -o SIZE /dev/${DISKS[$disk_choice]})
+DISK_SIZE_MB=$(echo $DISK_SIZE | sed 's/[A-Za-z]*//g' | awk '{print $1 * 1024}')
+echo "Gewählte Festplatte: $DISK (Größe: $DISK_SIZE)"
+
+# RAM-Größe ermitteln
+RAM_SIZE=$(free -h | grep Mem | awk '{print $2}')
+RAM_SIZE_MB=$(echo $RAM_SIZE | sed 's/[A-Za-z]*//g' | awk '{print $1 * 1024}')
+echo "Gesamte RAM-Größe: $RAM_SIZE (in MB: $RAM_SIZE_MB)"
 
 # Suffix für Partitionen bestimmen
 if [[ $DISK =~ nvme[0-9]n[0-9]$ ]]; then
@@ -77,56 +84,106 @@ echo "Setze neues GPT-Label auf $DISK..."
 parted "$DISK" --script mklabel gpt
 echo "Neues GPT-Label gesetzt."
 
-# LUKS-Passwort abfragen
-read -sp "LUKS-Passwort eingeben: " luks_password
-echo
-read -sp "LUKS-Passwort erneut eingeben: " luks_password_confirm
-echo
+# Partitionen manuell auswählen
+while true; do
+    # Anzeige der verfügbaren Größen
+    echo "Gesamte Festplattengröße: $DISK_SIZE_MB MB"
+    echo "Empfohlene maximale Größe für Swap-Partition: $RAM_SIZE_MB MB (1x RAM wird empfohlen)"
 
-if [[ "$luks_password" != "$luks_password_confirm" ]]; then
-    echo "Die eingegebenen Passwörter stimmen nicht überein. Abbruch."
-    exit 1
-fi
+    read -p "Gib die Größe der Swap-Partition an (z. B. 16G): " swap_size
+    swap_size_mb=$(echo $swap_size | sed 's/[A-Za-z]*//g')
+
+    if [[ -z "$swap_size" ]] || ! [[ "$swap_size" =~ ^[0-9]+[MG]?$ ]]; then
+        echo "Ungültige Eingabe, bitte eine gültige Größe für die Swap-Partition angeben (z. B. 16G oder 1024M)."
+        continue
+    fi
+
+    # Überprüfen, ob Swap innerhalb der Grenzen liegt
+    if (( swap_size_mb > RAM_SIZE_MB )); then
+        echo "Swap-Partition kann nicht größer als die RAM-Größe sein."
+        continue
+    fi
+
+    if (( swap_size_mb > DISK_SIZE_MB )); then
+        echo "Die Swap-Partition ist größer als die Festplatte. Bitte kleinere Werte wählen."
+        continue
+    fi
+
+    break
+done
+
+# Root- und Home-Partitionen auswählen
+while true; do
+    read -p "Gib die Größe der Root-Partition an (z. B. 100G): " root_size
+    root_size_mb=$(echo $root_size | sed 's/[A-Za-z]*//g')
+
+    if [[ -z "$root_size" ]] || ! [[ "$root_size" =~ ^[0-9]+[MG]?$ ]]; then
+        echo "Ungültige Eingabe, bitte eine gültige Größe für die Root-Partition angeben."
+        continue
+    fi
+
+    read -p "Gib die Größe der Home-Partition an (z. B. 100G): " home_size
+    home_size_mb=$(echo $home_size | sed 's/[A-Za-z]*//g')
+
+    if [[ -z "$home_size" ]] || ! [[ "$home_size" =~ ^[0-9]+[MG]?$ ]]; then
+        echo "Ungültige Eingabe, bitte eine gültige Größe für die Home-Partition angeben."
+        continue
+    fi
+
+    # Berechnungen für Gesamtgröße und Überprüfung
+    total_size_mb=$(($swap_size_mb + $root_size_mb + $home_size_mb))
+
+    if (( total_size_mb > DISK_SIZE_MB )); then
+        echo "Die Gesamtgröße der Partitionen überschreitet die Festplattengröße. Bitte kleinere Werte wählen."
+        continue
+    fi
+
+    break
+done
+
+echo "Festplattenpartitionen: Swap = $swap_size_mb MB, Root = $root_size_mb MB, Home = $home_size_mb MB"
 
 # Partitionieren der Festplatte
 echo "Partitioniere $DISK mit GPT..."
 parted "$DISK" -- mkpart ESP fat32 1MiB 1025MiB
 parted "$DISK" -- set 1 esp on
 parted "$DISK" -- name 1 EFI
-parted "$DISK" -- mkpart primary 1025MiB 100%
-parted "$DISK" -- name 2 LUKS
+parted "$DISK" -- mkpart primary 1025MiB $(($swap_size_mb + 1025))MiB
+parted "$DISK" -- name 2 swap
+parted "$DISK" -- mkpart primary $(($swap_size_mb + 1025))MiB $(($swap_size_mb + $root_size_mb + 1025))MiB
+parted "$DISK" -- name 3 root
+parted "$DISK" -- mkpart primary $(($swap_size_mb + $root_size_mb + 1025))MiB 100%
+parted "$DISK" -- name 4 home
 
 # EFI-Partition formatieren
 EFI_PART="${DISK}${PART_SUFFIX}1"
 echo "Formatiere EFI-Partition ($EFI_PART)..."
 mkfs.fat -F32 -n EFI "$EFI_PART"
 
-# LUKS-Partition einrichten
-LUKS_PART="${DISK}${PART_SUFFIX}2"
-echo "Erstelle und öffne LUKS-Partition ($LUKS_PART)..."
-cryptsetup luksFormat --type luks2 "$LUKS_PART"
-cryptsetup open "$LUKS_PART" cryptroot
+# Swap-Partition formatieren
+SWAP_PART="${DISK}${PART_SUFFIX}2"
+echo "Formatiere Swap-Partition ($SWAP_PART)..."
+mkswap "$SWAP_PART"
 
-# LVM einrichten
-echo "Erstelle LVM-Volumes..."
-pvcreate /dev/mapper/cryptroot
-vgcreate vg /dev/mapper/cryptroot
-lvcreate -L 16G -n swap vg
-lvcreate -L 100G -n root vg
-lvcreate -l 100%FREE -n home vg
+# Root-Partition formatieren
+ROOT_PART="${DISK}${PART_SUFFIX}3"
+echo "Formatiere Root-Partition ($ROOT_PART)..."
+mkfs.ext4 -L ROOT "$ROOT_PART"
 
-# Dateisysteme formatieren
-echo "Formatiere Dateisysteme..."
-mkfs.ext4 -L ROOT /dev/vg/root
-mkfs.ext4 -L HOME /dev/vg/home
-mkswap --label SWAP /dev/vg/swap
+# Home-Partition formatieren
+HOME_PART="${DISK}${PART_SUFFIX}4"
+echo "Formatiere Home-Partition ($HOME_PART)..."
+mkfs.ext4 -L HOME "$HOME_PART"
+
+# LVM einrichten (optional, wenn gewünscht)
+# echo "LVM einrichten (optional)..."
 
 # Mounten der Dateisysteme
 echo "Mounten der Dateisysteme..."
-swapon /dev/vg/swap
-mount LABEL=ROOT /mnt
+swapon "$SWAP_PART"
+mount "$ROOT_PART" /mnt
 mkdir /mnt/home
-mount LABEL=HOME /mnt/home
+mount "$HOME_PART" /mnt/home
 mkdir -p /mnt/boot
 mount "$EFI_PART" /mnt/boot
 
