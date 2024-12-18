@@ -39,7 +39,7 @@ done
 
 RAM_SIZE=$(awk '/^MemTotal:/ {printf "%.0f\n", $2 / 1024 / 1024}' /proc/meminfo)
 SWAP_SIZE=$((RAM_SIZE / 2))
-RAM_SIZE_MB=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo
+RAM_SIZE_MB=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
 
 ROOT_SIZE=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3 / 1024) + 0.5)}")
 ROOT_SIZE_MB=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3) + 0.5)}")
@@ -61,16 +61,20 @@ while true; do
     case "$wipe_choice" in
         0)
             echo "Überschreibe $DISK mit Nullbytes..."
-            dd if=/dev/zero of="$DISK" bs=1M status=progress conv=fsync || {
+            if dd if=/dev/zero of="$DISK" bs=1M status=progress conv=fsync; then
                 echo "Überschreibung mit Nullbytes abgeschlossen."
-            }
+            else
+                echo "Fehler beim Überschreiben mit Nullbytes."
+            fi
             break
             ;;
         1)
             echo "Überschreibe $DISK mit Zufallswerten..."
-            dd if=/dev/urandom of="$DISK" bs=1M status=progress conv=fsync || {
+            if dd if=/dev/urandom of="$DISK" bs=1M status=progress conv=fsync; then
                 echo "Überschreibung mit Zufallswerten abgeschlossen."
-            }
+            else
+                echo "Fehler beim Überschreiben mit Zufallswerten."
+            fi
             break
             ;;
         n)
