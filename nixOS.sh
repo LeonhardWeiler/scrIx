@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
     echo "Bitte das Skript als Root ausführen."
@@ -11,7 +11,6 @@ if [[ ! -d /sys/firmware/efi/efivars ]]; then
     echo "Das System verwendet kein UEFI. Die Installation wird abgebrochen."
     exit 1
 fi
-
 echo "UEFI-Umgebung erkannt. Fortsetzung..."
 
 echo "Verfügbare Festplatten:"
@@ -20,27 +19,28 @@ for i in "${!DISKS[@]}"; do
     echo "$i) ${DISKS[$i]} ($(lsblk -d -n -o SIZE /dev/${DISKS[$i]}))"
 done
 
-read -p "Wähle die Festplatte aus (Zahl eingeben, n für Abbruch): " disk_choice
-if [[ "$disk_choice" == "n" ]]; then
-    echo "Installation abgebrochen."
-    exit 1
-fi
+while true; do
+    read -p "Wähle die Festplatte aus (Zahl eingeben, 'n' für Abbruch): " disk_choice
+    if [[ "$disk_choice" == "n" ]]; then
+        echo "Installation abgebrochen."
+        exit 1
+    fi
+    if [[ "$disk_choice" =~ ^[0-9]+$ ]] && [[ "$disk_choice" -lt "${#DISKS[@]}" ]]; then
+        DISK="/dev/${DISKS[$disk_choice]}"
+        DISK_SIZE=$(lsblk -d -n -o SIZE "$DISK")
+        DISK_SIZE_MB=$(lsblk -d -n -b -o SIZE "$DISK" | awk '{print $1 / 1024 / 1024}')
+        echo "Gewählte Festplatte: $DISK (Größe: $DISK_SIZE, ${DISK_SIZE_MB}MB)"
+        break
+    else
+        echo "Ungültige Auswahl. Bitte erneut versuchen."
+    fi
+done
 
-if ! [[ "$disk_choice" =~ ^[0-9]+$ ]] || [[ "$disk_choice" -ge "${#DISKS[@]}" ]]; then
-    echo "Ungültige Auswahl. Abbruch."
-    exit 1
-fi
+RAM_SIZE=$(free -h | awk '/^Mem:/ {print $2}')
+RAM_SIZE_MB=$(free -m | awk '/^Mem:/ {print $2}')
 
-DISK="/dev/${DISKS[$disk_choice]}"
-DISK_SIZE=$(lsblk -d -n -o SIZE /dev/${DISKS[$disk_choice]})
-DISK_SIZE_MB=$(echo $DISK_SIZE | sed 's/[A-Za-z]*//g' | awk '{print $1 * 1024}')
-echo "Gewählte Festplatte: $DISK (Größe: $DISK_SIZE)"
-
-RAM_SIZE=$(free -h | grep Mem | awk '{print $2}')
-RAM_SIZE_MB=$(echo $RAM_SIZE | sed 's/[A-Za-z]*//g' | awk '{print $1 * 1024}')
-
-ROOT_SIZE=$DISK_SIZE/3
-ROOT_SIZE_MB=$DISK_SIZE_MB/3
+ROOT_SIZE=$(awk "BEGIN {print $DISK_SIZE_MB / 3 / 1024}")
+ROOT_SIZE_MB=$(awk "BEGIN {print $DISK_SIZE_MB / 3}")
 
 if [[ $DISK =~ nvme[0-9]n[0-9]$ ]]; then
     PART_SUFFIX="p"
@@ -49,34 +49,44 @@ else
 fi
 
 echo "WARNUNG: ALLE DATEN AUF $DISK WERDEN GELÖSCHT."
-echo "Methode der Überschreibung wählen:"
+echo "Wähle die Methode zur Überschreibung der Festplatte:"
 echo "0) Mit Nullbytes überschreiben (schnell)"
-echo "1) Mit Zufallswerten überschreiben (sicher, aber langsam)"
+echo "1) Mit Zufallswerten überschreiben (sicher, aber langsamer)"
 echo "n) Abbrechen"
 
-read -p "Eingabe: " wipe_choice
-case "$wipe_choice" in
-    0)
-        echo "Überschreibe $DISK mit Nullbytes..."
-        dd if=/dev/zero of="$DISK" bs=1M status=progress || true
-        ;;
-    1)
-        echo "Überschreibe $DISK mit Zufallswerten..."
-        dd if=/dev/urandom of="$DISK" bs=1M status=progress || true
-        ;;
-    n)
-        echo "Installation abgebrochen."
-        exit 1
-        ;;
-    *)
-        echo "Ungültige Eingabe. Abbruch."
-        exit 1
-        ;;
-esac
+while true; do
+    read -p "Eingabe: " wipe_choice
+    case "$wipe_choice" in
+        0)
+            echo "Überschreibe $DISK mit Nullbytes..."
+            dd if=/dev/zero of="$DISK" bs=1M status=progress conv=fsync || {
+                echo "Überschreibung mit Nullbytes abgeschlossen (Speicherplatz möglicherweise erschöpft)."
+            }
+            break
+            ;;
+        1)
+            echo "Überschreibe $DISK mit Zufallswerten..."
+            dd if=/dev/urandom of="$DISK" bs=1M status=progress conv=fsync || {
+                echo "Überschreibung mit Zufallswerten abgeschlossen (Speicherplatz möglicherweise erschöpft)."
+            }
+            break
+            ;;
+        n)
+            echo "Installation abgebrochen."
+            exit 1
+            ;;
+        *)
+            echo "Ungültige Eingabe. Bitte 0, 1 oder n eingeben."
+            ;;
+    esac
+done
 
 echo "Setze neues GPT-Label auf $DISK..."
-parted "$DISK" --script mklabel gpt
-echo "Neues GPT-Label gesetzt."
+parted "$DISK" --script mklabel gpt || {
+    echo "Fehler beim Setzen des GPT-Labels."
+    exit 1
+}
+echo "Neues GPT-Label erfolgreich gesetzt."
 
 validate_size_input() {
     local input="$1"
