@@ -84,75 +84,16 @@ echo "Setze neues GPT-Label auf $DISK..."
 parted "$DISK" --script mklabel gpt
 echo "Neues GPT-Label gesetzt."
 
-# Partitionen manuell auswählen
-while true; do
-    # Anzeige der verfügbaren Größen
-    echo "Gesamte Festplattengröße: $DISK_SIZE_MB MB"
-    echo "Empfohlene maximale Größe für Swap-Partition: $RAM_SIZE_MB MB (1x RAM wird empfohlen)"
-
-    read -p "Gib die Größe der Swap-Partition an (z. B. 16G): " swap_size
-    swap_size_mb=$(echo $swap_size | sed 's/[A-Za-z]*//g')
-
-    if [[ -z "$swap_size" ]] || ! [[ "$swap_size" =~ ^[0-9]+[MG]?$ ]]; then
-        echo "Ungültige Eingabe, bitte eine gültige Größe für die Swap-Partition angeben (z. B. 16G oder 1024M)."
-        continue
-    fi
-
-    # Überprüfen, ob Swap innerhalb der Grenzen liegt
-    if (( swap_size_mb > RAM_SIZE_MB )); then
-        echo "Swap-Partition kann nicht größer als die RAM-Größe sein."
-        continue
-    fi
-
-    if (( swap_size_mb > DISK_SIZE_MB )); then
-        echo "Die Swap-Partition ist größer als die Festplatte. Bitte kleinere Werte wählen."
-        continue
-    fi
-
-    break
-done
-
-# Root- und Home-Partitionen auswählen
-while true; do
-    read -p "Gib die Größe der Root-Partition an (z. B. 100G): " root_size
-    root_size_mb=$(echo $root_size | sed 's/[A-Za-z]*//g')
-
-    if [[ -z "$root_size" ]] || ! [[ "$root_size" =~ ^[0-9]+[MG]?$ ]]; then
-        echo "Ungültige Eingabe, bitte eine gültige Größe für die Root-Partition angeben."
-        continue
-    fi
-
-    read -p "Gib die Größe der Home-Partition an (z. B. 100G): " home_size
-    home_size_mb=$(echo $home_size | sed 's/[A-Za-z]*//g')
-
-    if [[ -z "$home_size" ]] || ! [[ "$home_size" =~ ^[0-9]+[MG]?$ ]]; then
-        echo "Ungültige Eingabe, bitte eine gültige Größe für die Home-Partition angeben."
-        continue
-    fi
-
-    # Berechnungen für Gesamtgröße und Überprüfung
-    total_size_mb=$(($swap_size_mb + $root_size_mb + $home_size_mb))
-
-    if (( total_size_mb > DISK_SIZE_MB )); then
-        echo "Die Gesamtgröße der Partitionen überschreitet die Festplattengröße. Bitte kleinere Werte wählen."
-        continue
-    fi
-
-    break
-done
-
-echo "Festplattenpartitionen: Swap = $swap_size_mb MB, Root = $root_size_mb MB, Home = $home_size_mb MB"
-
-# Partitionieren der Festplatte
+# Partitionen erstellen
 echo "Partitioniere $DISK mit GPT..."
 parted "$DISK" -- mkpart ESP fat32 1MiB 1025MiB
 parted "$DISK" -- set 1 esp on
 parted "$DISK" -- name 1 EFI
-parted "$DISK" -- mkpart primary 1025MiB $(($swap_size_mb + 1025))MiB
+parted "$DISK" -- mkpart primary 1025MiB $(($RAM_SIZE_MB + 1025))MiB
 parted "$DISK" -- name 2 swap
-parted "$DISK" -- mkpart primary $(($swap_size_mb + 1025))MiB $(($swap_size_mb + $root_size_mb + 1025))MiB
+parted "$DISK" -- mkpart primary $(($RAM_SIZE_MB + 1025))MiB $(($RAM_SIZE_MB + 1025 + (DISK_SIZE_MB/3)))MiB
 parted "$DISK" -- name 3 root
-parted "$DISK" -- mkpart primary $(($swap_size_mb + $root_size_mb + 1025))MiB 100%
+parted "$DISK" -- mkpart primary $(($RAM_SIZE_MB + 1025 + (DISK_SIZE_MB/3)))MiB 100%
 parted "$DISK" -- name 4 home
 
 # EFI-Partition formatieren
@@ -174,9 +115,6 @@ mkfs.ext4 -L ROOT "$ROOT_PART"
 HOME_PART="${DISK}${PART_SUFFIX}4"
 echo "Formatiere Home-Partition ($HOME_PART)..."
 mkfs.ext4 -L HOME "$HOME_PART"
-
-# LVM einrichten (optional, wenn gewünscht)
-# echo "LVM einrichten (optional)..."
 
 # Mounten der Dateisysteme
 echo "Mounten der Dateisysteme..."
