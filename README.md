@@ -1,0 +1,2 @@
+# scrIx
+NixOS install script
