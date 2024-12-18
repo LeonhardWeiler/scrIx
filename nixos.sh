@@ -151,7 +151,7 @@ while true; do
             fi
 
             total_size_mb=$(awk "BEGIN {print $swap_size_mb + $root_size_mb + $home_size_mb}")
-            total_size=$(awk "BEGIN {print $swap_size_mb + $root_size + $home_size}")
+            total_size=$((total_size_mb / 1024))
             if (( total_size_mb > DISK_SIZE_MB )); then
                 echo "Die Gesamtgröße der Partitionen (${total_size}G) überschreitet die Festplattengröße (${DISK_SIZE}G)."
                 continue
