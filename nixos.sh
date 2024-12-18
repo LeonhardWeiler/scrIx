@@ -61,8 +61,7 @@ while true; do
     case "$wipe_choice" in
         0)
             echo "Überschreibe $DISK mit Nullbytes..."
-            dd if=/dev/zero of="$DISK" bs=1M status=progress conv=fsync
-            if [ $? -eq 0 ]; then
+            if dd if=/dev/zero of="$DISK" bs=1M status=progress conv=fsync; then
                 echo "Überschreibung mit Nullbytes abgeschlossen."
             else
                 echo "Fehler beim Überschreiben mit Nullbytes."
@@ -71,8 +70,7 @@ while true; do
             ;;
         1)
             echo "Überschreibe $DISK mit Zufallswerten..."
-            dd if=/dev/urandom of="$DISK" bs=1M status=progress conv=fsync
-            if [ $? -eq 0 ]; then
+            if dd if=/dev/urandom of="$DISK" bs=1M status=progress conv=fsync; then
                 echo "Überschreibung mit Zufallswerten abgeschlossen."
             else
                 echo "Fehler beim Überschreiben mit Zufallswerten."
