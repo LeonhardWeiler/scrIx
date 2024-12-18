@@ -2,13 +2,11 @@
 
 set -e
 
-# Sicherstellen, dass das Skript als Root ausgeführt wird
 if [[ $EUID -ne 0 ]]; then
     echo "Bitte das Skript als Root ausführen."
     exit 1
 fi
 
-# Prüfen, ob UEFI verwendet wird
 if [[ ! -d /sys/firmware/efi/efivars ]]; then
     echo "Das System verwendet kein UEFI. Die Installation wird abgebrochen."
     exit 1
@@ -16,7 +14,6 @@ fi
 
 echo "UEFI-Umgebung erkannt. Fortsetzung..."
 
-# Festplatten erkennen und zur Auswahl anzeigen
 echo "Verfügbare Festplatten:"
 DISKS=($(lsblk -d -n -o NAME | grep -v loop))
 for i in "${!DISKS[@]}"; do
@@ -29,7 +26,6 @@ if [[ "$disk_choice" == "n" ]]; then
     exit 1
 fi
 
-# Prüfen, ob die Auswahl gültig ist
 if ! [[ "$disk_choice" =~ ^[0-9]+$ ]] || [[ "$disk_choice" -ge "${#DISKS[@]}" ]]; then
     echo "Ungültige Auswahl. Abbruch."
     exit 1
@@ -40,19 +36,19 @@ DISK_SIZE=$(lsblk -d -n -o SIZE /dev/${DISKS[$disk_choice]})
 DISK_SIZE_MB=$(echo $DISK_SIZE | sed 's/[A-Za-z]*//g' | awk '{print $1 * 1024}')
 echo "Gewählte Festplatte: $DISK (Größe: $DISK_SIZE)"
 
-# RAM-Größe ermitteln
 RAM_SIZE=$(free -h | grep Mem | awk '{print $2}')
 RAM_SIZE_MB=$(echo $RAM_SIZE | sed 's/[A-Za-z]*//g' | awk '{print $1 * 1024}')
 echo "Gesamte RAM-Größe: $RAM_SIZE (in MB: $RAM_SIZE_MB)"
 
-# Suffix für Partitionen bestimmen
+ROOT_SIZE=$DISK_SIZE/3
+ROOT_SIZE_MB=$DISK_SIZE_MB/3
+
 if [[ $DISK =~ nvme[0-9]n[0-9]$ ]]; then
-    PART_SUFFIX="p"  # NVMe verwendet "p" für Partitionen (z. B. nvme0n1p1)
+    PART_SUFFIX="p"
 else
-    PART_SUFFIX=""   # SATA und Virtio verwenden keinen zusätzlichen Suffix (z. B. sda1)
+    PART_SUFFIX=""
 fi
 
-# Benutzerwarnung vor Datenverlust und Auswahl der Überschreibungsmethode
 echo "WARNUNG: ALLE DATEN AUF $DISK WERDEN GELÖSCHT."
 echo "Methode der Überschreibung wählen:"
 echo "0) Mit Nullbytes überschreiben (schnell)"
@@ -79,55 +75,145 @@ case "$wipe_choice" in
         ;;
 esac
 
-# Neues GPT-Label setzen
 echo "Setze neues GPT-Label auf $DISK..."
 parted "$DISK" --script mklabel gpt
 echo "Neues GPT-Label gesetzt."
 
-# Partitionen erstellen
+while true; do
+    read -p "Gib die Größe der Swap-Partition in GB oder MB an (z. B. ${RAM_SIZE}G): " swap_size
+
+    size_value=$(echo "$swap_size" | sed 's/[A-Za-z]*//g')
+    unit=$(echo "$swap_size" | grep -o '[MG]$')
+
+    if [[ -z "$swap_size" ]] || ! [[ "$swap_size" =~ ^[0-9]+[MG]$ ]]; then
+        echo "Ungültige Eingabe, bitte eine gültige Größe angeben (z. B. ${RAM_SIZE}G oder ${RAM_SIZE_MB}M)."
+        continue
+    fi
+
+    if [[ "$unit" == "G" ]]; then
+        swap_size_mb=$((size_value * 1024))
+    else
+        swap_size_mb=$size_value
+    fi
+
+    if (( swap_size_mb > RAM_SIZE_MB )); then
+        echo "Swap-Partition kann nicht größer als die RAM-Größe sein (${RAM_SIZE_MB} MB)."
+        continue
+    fi
+
+    if (( swap_size_mb > DISK_SIZE_MB )); then
+        echo "Die Swap-Partition ist größer als der verfügbare Festplattenspeicher (${DISK_SIZE_MB} MB). Bitte kleinere Werte wählen."
+        continue
+    fi
+
+    break
+done
+
+while true; do
+    read -p "Gib die Größe der Root-Partition an (z. B. ${ROOT_SIZE}G): " root_size
+
+    root_value=$(echo "$root_size" | sed 's/[A-Za-z]*//g')
+    root_unit=$(echo "$root_size" | grep -o '[MG]$')
+
+    if [[ -z "$root_size" ]] || ! [[ "$root_size" =~ ^[0-9]+[MG]$ ]]; then
+        echo "Ungültige Eingabe, bitte eine gültige Größe für die Root-Partition angeben (z. B. ${ROOT_SIZE}G)."
+        continue
+    fi
+
+    if [[ "$root_unit" == "G" ]]; then
+        root_size_mb=$((root_value * 1024))
+    else
+        root_size_mb=$root_value
+    fi
+
+    remaining_size_mb=$((DISK_SIZE_MB - swap_size_mb - root_size_mb))
+
+    if (( remaining_size_mb <= 0 )); then
+        echo "Die Root- und Swap-Partitionen überschreiten bereits die Festplattengröße (${DISK_SIZE_MB} MB)."
+        continue
+    fi
+
+    read -p "Gib die Größe der Home-Partition an (z. B. 100G oder 'default' für verbleibende ${remaining_size_mb}MB): " home_size
+
+    if [[ "$home_size" == "default" ]]; then
+        home_size_mb=$remaining_size_mb
+    else
+        home_value=$(echo "$home_size" | sed 's/[A-Za-z]*//g')
+        home_unit=$(echo "$home_size" | grep -o '[MG]$')
+
+        if [[ -z "$home_size" ]] || ! [[ "$home_size" =~ ^[0-9]+[MG]$ ]]; then
+            echo "Ungültige Eingabe, bitte eine gültige Größe für die Home-Partition angeben."
+            continue
+        fi
+
+        if [[ "$home_unit" == "G" ]]; then
+            home_size_mb=$((home_value * 1024))
+        else
+            home_size_mb=$home_value
+        fi
+    fi
+
+    total_size_mb=$((swap_size_mb + root_size_mb + home_size_mb))
+    if (( total_size_mb > DISK_SIZE_MB )); then
+        echo "Die Gesamtgröße der Partitionen ($total_size_mb MB) überschreitet die Festplattengröße (${DISK_SIZE_MB} MB)."
+        continue
+    fi
+
+    break
+done
+
+echo "Partitionierung erfolgreich:"
+echo "  Swap-Partition: ${swap_size_mb} MB"
+echo "  Root-Partition: ${root_size_mb} MB"
+echo "  Home-Partition: ${home_size_mb} MB"
+
+read -sp "LUKS-Passwort eingeben: " luks_password
+echo
+read -sp "LUKS-Passwort erneut eingeben: " luks_password_confirm
+echo
+
+if [[ "$luks_password" != "$luks_password_confirm" ]]; then
+    echo "Die eingegebenen Passwörter stimmen nicht überein. Abbruch."
+    exit 1
+fi
+
 echo "Partitioniere $DISK mit GPT..."
 parted "$DISK" -- mkpart ESP fat32 1MiB 1025MiB
 parted "$DISK" -- set 1 esp on
 parted "$DISK" -- name 1 EFI
-parted "$DISK" -- mkpart primary 1025MiB $(($RAM_SIZE_MB + 1025))MiB
-parted "$DISK" -- name 2 swap
-parted "$DISK" -- mkpart primary $(($RAM_SIZE_MB + 1025))MiB $(($RAM_SIZE_MB + 1025 + (DISK_SIZE_MB/3)))MiB
-parted "$DISK" -- name 3 root
-parted "$DISK" -- mkpart primary $(($RAM_SIZE_MB + 1025 + (DISK_SIZE_MB/3)))MiB 100%
-parted "$DISK" -- name 4 home
+parted "$DISK" -- mkpart primary 1025MiB 100%
+parted "$DISK" -- name 2 LUKS
 
-# EFI-Partition formatieren
 EFI_PART="${DISK}${PART_SUFFIX}1"
 echo "Formatiere EFI-Partition ($EFI_PART)..."
 mkfs.fat -F32 -n EFI "$EFI_PART"
 
-# Swap-Partition formatieren
-SWAP_PART="${DISK}${PART_SUFFIX}2"
-echo "Formatiere Swap-Partition ($SWAP_PART)..."
-mkswap "$SWAP_PART"
+LUKS_PART="${DISK}${PART_SUFFIX}2"
+echo "Erstelle und öffne LUKS-Partition ($LUKS_PART)..."
+cryptsetup luksFormat --type luks2 "$LUKS_PART"
+cryptsetup open "$LUKS_PART" cryptroot
 
-# Root-Partition formatieren
-ROOT_PART="${DISK}${PART_SUFFIX}3"
-echo "Formatiere Root-Partition ($ROOT_PART)..."
-mkfs.ext4 -L ROOT "$ROOT_PART"
+echo "Erstelle LVM-Volumes..."
+pvcreate /dev/mapper/cryptroot
+vgcreate vg /dev/mapper/cryptroot
+lvcreate -L $swap_size_mb -n swap vg
+lvcreate -L $root_size_mb -n root vg
+lvcreate -l $home_size_mb -n home vg
 
-# Home-Partition formatieren
-HOME_PART="${DISK}${PART_SUFFIX}4"
-echo "Formatiere Home-Partition ($HOME_PART)..."
-mkfs.ext4 -L HOME "$HOME_PART"
+echo "Formatiere Dateisysteme..."
+mkfs.ext4 -L ROOT /dev/vg/root
+mkfs.ext4 -L HOME /dev/vg/home
+mkswap --label SWAP /dev/vg/swap
 
-# Mounten der Dateisysteme
 echo "Mounten der Dateisysteme..."
-swapon "$SWAP_PART"
-mount "$ROOT_PART" /mnt
+swapon /dev/vg/swap
+mount LABEL=ROOT /mnt
 mkdir /mnt/home
-mount "$HOME_PART" /mnt/home
+mount LABEL=HOME /mnt/home
 mkdir -p /mnt/boot
 mount "$EFI_PART" /mnt/boot
 
-# NixOS-Konfiguration generieren
 echo "Generiere NixOS-Konfiguration..."
 nixos-generate-config --root /mnt
 
 echo "Skript abgeschlossen. Bitte die Konfiguration in /mnt/etc/nixos/configuration.nix anpassen und 'nixos-install' ausführen."
-
