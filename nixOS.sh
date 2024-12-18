@@ -8,7 +8,8 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 if [[ ! -d /sys/firmware/efi/efivars ]]; then
-    echo "Das System verwendet kein UEFI. Die Installation wird abgebrochen."
+    echo "Das System verwendet kein UEFI. Die Installation setzt UEFI voraus."
+    echo "Stellen Sie sicher, dass das System im UEFI-Modus gestartet wurde."
     exit 1
 fi
 echo "UEFI-Umgebung erkannt. Fortsetzung..."
@@ -80,13 +81,6 @@ while true; do
             ;;
     esac
 done
-
-echo "Setze neues GPT-Label auf $DISK..."
-parted "$DISK" --script mklabel gpt || {
-    echo "Fehler beim Setzen des GPT-Labels."
-    exit 1
-}
-echo "Neues GPT-Label erfolgreich gesetzt."
 
 validate_size_input() {
     local input="$1"
@@ -179,13 +173,13 @@ while true; do
     fi
 done
 
-echo "Partitioniere $DISK mit GPT..."
-parted "$DISK" --script mklabel gpt || { echo "Fehler beim Erstellen des GPT-Labels."; exit 1; }
-parted "$DISK" --script mkpart ESP fat32 1MiB 1025MiB
-parted "$DISK" --script set 1 esp on
-parted "$DISK" --script name 1 EFI
-parted "$DISK" --script mkpart primary 1025MiB 100%
-parted "$DISK" --script name 2 LUKS
+echo "Partitioniere und richte GPT auf $DISK ein..."
+parted "$DISK" --script mklabel gpt \
+    mkpart ESP fat32 1MiB 1025MiB \
+    set 1 esp on \
+    name 1 EFI \
+    mkpart primary 1025MiB 100% \
+    name 2 LUKS || { echo "Fehler beim Partitionieren."; exit 1; }
 
 EFI_PART="${DISK}${PART_SUFFIX}1"
 LUKS_PART="${DISK}${PART_SUFFIX}2"
@@ -196,6 +190,8 @@ mkfs.fat -F32 -n EFI "$EFI_PART" || { echo "Fehler beim Formatieren der EFI-Part
 echo "Erstelle und öffne LUKS-Partition ($LUKS_PART)..."
 echo -n "$luks_password" | cryptsetup luksFormat --type luks2 "$LUKS_PART" --key-file -
 echo -n "$luks_password" | cryptsetup open "$LUKS_PART" cryptroot --key-file -
+
+unset luks_password luks_password_confirm
 
 echo "Erstelle LVM-Volumes..."
 pvcreate /dev/mapper/cryptroot || { echo "Fehler beim Erstellen von Physical Volume."; exit 1; }
@@ -225,4 +221,7 @@ mount "$EFI_PART" /mnt/boot || { echo "Fehler beim Mounten der EFI-Partition."; 
 echo "Generiere NixOS-Konfiguration..."
 nixos-generate-config --root /mnt || { echo "Fehler beim Generieren der NixOS-Konfiguration."; exit 1; }
 
-echo "Skript abgeschlossen. Bitte die Konfiguration in /mnt/etc/nixos/configuration.nix anpassen und 'nixos-install' ausführen."
+echo "Skript abgeschlossen. Bitte die Konfiguration in /mnt/etc/nixos/configuration.nix anpassen."
+echo "Führen Sie anschließend 'nixos-install' aus, um die Installation zu starten."
+echo "Nach der Installation kann der Bootloader mit 'nixos-rebuild boot' konfiguriert werden."
+
