@@ -39,7 +39,7 @@ done
 
 RAM_SIZE=$(awk '/^MemTotal:/ {printf "%.0f\n", $2 / 1024 / 1024}' /proc/meminfo)
 SWAP_SIZE=$((RAM_SIZE / 2))
-RAM_SIZE_MB=$(awk '/^MemTotal:/ {print $2 / 1024}' /proc/meminfo)
+RAM_SIZE_MB=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo
 
 ROOT_SIZE=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3 / 1024) + 0.5)}")
 ROOT_SIZE_MB=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3) + 0.5)}")
@@ -107,7 +107,7 @@ while true; do
     read -p "Gib die Größe der Swap-Partition in 'G' oder 'M' an (z.B. ${SWAP_SIZE}G): " swap_size
 
     if validate_size_input "$swap_size"; then
-        swap_size_mb=$(convert_to_mb "$swap_size")
+        swap_size_mb=$(convert_to_mb "$swap_size" | awk '{print int($1 + 0.5)}')
         if (( swap_size_mb > RAM_SIZE_MB )); then
             echo "Swap-Partition kann nicht größer als die RAM-Größe sein (${RAM_SIZE}G)."
             continue
@@ -146,8 +146,8 @@ while true; do
                 fi
             fi
 
-            total_size_mb=$((swap_size_mb + root_size_mb + home_size_mb))
-            total_size=$((swap_size + root_size + home_size))
+            total_size_mb=$(echo $swap_size_mb + $root_size_mb + $home_size_mb | bc | awk '{print int($1 + 0.5)}')
+            total_size=$(echo "$swap_size_mb + $root_size + $home_size" | bc | awk '{print int($1 + 0.5)}')
             if (( total_size_mb > DISK_SIZE_MB )); then
                 echo "Die Gesamtgröße der Partitionen (${total_size}G) überschreitet die Festplattengröße (${DISK_SIZE}G)."
                 continue
