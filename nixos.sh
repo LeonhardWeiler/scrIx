@@ -38,7 +38,7 @@ while true; do
 done
 
 RAM_SIZE=$(awk '/^MemTotal:/ {printf "%.0f\n", $2 / 1024 / 1024}' /proc/meminfo)
-SWAP_SIZE=(($RAM_SIZE / 2))
+SWAP_SIZE=((RAM_SIZE / 2))
 RAM_SIZE_MB=$(awk '/^MemTotal:/ {print $2 / 1024}' /proc/meminfo)
 
 ROOT_SIZE=$(awk "BEGIN {print $DISK_SIZE_MB / 3 / 1024}")
