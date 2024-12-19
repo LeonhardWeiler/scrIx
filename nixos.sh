@@ -41,8 +41,8 @@ RAM_SIZE=$(awk '/^MemTotal:/ {printf "%.0f\n", $2 / 1024 / 1024}' /proc/meminfo)
 SWAP_SIZE=$((RAM_SIZE / 2))
 RAM_SIZE_MB=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
 
-ROOT_SIZE=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3 / 1024) + 0.5)}")
-ROOT_SIZE_MB=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3) + 0.5)}")
+ROOT_SIZE=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3 / 1024)}")
+ROOT_SIZE_MB=$(awk "BEGIN {print int(($DISK_SIZE_MB / 3)}")
 
 if [[ $DISK =~ nvme[0-9]n[0-9]$ ]]; then
     PART_SUFFIX="p"
@@ -107,11 +107,23 @@ convert_to_mb() {
     fi
 }
 
+convert_to_gb() {
+    local size="$1"
+    local value="${size%[MG]}"
+    local unit="${size: -1}"
+    if [[ "$unit" == "G" ]]; then
+        echo "$value"
+    else
+        echo $((value / 1024))
+    fi
+}
+
 while true; do
     read -p "Gib die Größe der Swap-Partition in 'G' oder 'M' an (z.B. ${SWAP_SIZE}G): " swap_size
 
     if validate_size_input "$swap_size"; then
-        swap_size_mb=$(convert_to_mb "$swap_size" | awk '{print int($1 + 0.5)}')
+        swap_size_mb=$(convert_to_mb "$swap_size" | awk '{print int($1)}')
+        swap_size_gb=$(convert_to_gb "$swap_size" | awk '{print int($1)}')
         if (( swap_size_mb > RAM_SIZE_MB )); then
             echo "Swap-Partition kann nicht größer als die RAM-Größe sein (${RAM_SIZE}G)."
             continue
@@ -128,9 +140,10 @@ while true; do
     read -p "Gib die Größe der Root-Partition in 'G' oder 'M' an (z.B. ${ROOT_SIZE}G): " root_size
 
     if validate_size_input "$root_size"; then
-        root_size_mb=$(convert_to_mb "$root_size")
+        root_size_mb=$(convert_to_mb "$root_size" | awk '{print int($1)}')
+        root_size_gb=$(convert_to_gb "$root_size" | awk '{print int($1)}')
         remaining_size_mb=$((DISK_SIZE_MB - swap_size_mb - root_size_mb))
-        remaining_size_gb=$((remaining_size_mb / 1024))
+        remaining_size_gb=$(convert_to_gb "$remaining_size_mb" | awk '{print int($1)}')
 
         if (( remaining_size_mb <= 0 )); then
             echo "Die Root- und Swap-Partitionen überschreiten die Festplattengröße (${DISK_SIZE}G)."
@@ -150,8 +163,10 @@ while true; do
                 fi
             fi
 
+            home_size_gb=$(convert_to_gb "$home_size_mb" | awk '{print int($1)}')
+
             total_size_mb=$(awk "BEGIN {print $swap_size_mb + $root_size_mb + $home_size_mb}")
-            total_size=$((total_size_mb / 1024))
+            total_size_gb=$(awk "BEGIN {print $swap_size_gb + $root_size_gb + $home_size_gb}")
             if (( total_size_mb > DISK_SIZE_MB )); then
                 echo "Die Gesamtgröße der Partitionen (${total_size}G) überschreitet die Festplattengröße (${DISK_SIZE}G)."
                 continue
@@ -163,9 +178,9 @@ while true; do
 done
 
 echo "Partitionierung erfolgreich:"
-echo "  Swap-Partition: ${swap_size}"
-echo "  Root-Partition: ${root_size}"
-echo "  Home-Partition: ${home_size}"
+echo "  Swap-Partition: ${swap_size_gb}"
+echo "  Root-Partition: ${root_size_gb}"
+echo "  Home-Partition: ${home_size_gb}"
 
 while true; do
     read -sp "LUKS-Passwort eingeben: " luks_password
