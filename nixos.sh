@@ -216,10 +216,18 @@ echo -n "$luks_password" | cryptsetup open "$LUKS_PART" cryptroot --key-file -
 unset luks_password luks_password_confirm
 
 echo "Erstelle LVM-Volumes..."
+lvremove -f /dev/vg/swap || true
+lvremove -f /dev/vg/root || true
+vgremove -f vg || true
+pvremove -f /dev/mapper/cryptroot || true
+
 pvcreate /dev/mapper/cryptroot || { echo "Fehler beim Erstellen von Physical Volume."; exit 1; }
 vgcreate vg /dev/mapper/cryptroot || { echo "Fehler beim Erstellen von Volume Group."; exit 1; }
+
 lvcreate -L "${swap_size_mb}M" -n swap vg || { echo "Fehler beim Erstellen des Swap-Volumes."; exit 1; }
 lvcreate -L "${root_size_mb}M" -n root vg || { echo "Fehler beim Erstellen des Root-Volumes."; exit 1; }
+
+echo "LVM-Volumes erfolgreich erstellt."
 
 if [[ "$home_size" == "default" ]]; then
     lvcreate -l 100%FREE -n home vg || { echo "Fehler beim Erstellen der Home-Partition."; exit 1; }
