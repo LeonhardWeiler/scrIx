@@ -178,9 +178,9 @@ while true; do
 done
 
 echo "Partitionierung erfolgreich:"
-echo "  Swap-Partition: ${swap_size_gb}"
-echo "  Root-Partition: ${root_size_gb}"
-echo "  Home-Partition: ${home_size_gb}"
+echo "  Swap-Partition: ${swap_size_gb}G"
+echo "  Root-Partition: ${root_size_gb}G"
+echo "  Home-Partition: ${home_size_gb}G"
 
 while true; do
     read -sp "LUKS-Passwort eingeben: " luks_password
@@ -216,24 +216,52 @@ echo -n "$luks_password" | cryptsetup open "$LUKS_PART" cryptroot --key-file -
 unset luks_password luks_password_confirm
 
 echo "Erstelle LVM-Volumes..."
-lvremove -f /dev/vg/swap || true
-lvremove -f /dev/vg/root || true
-vgremove -f vg || true
-pvremove -f /dev/mapper/cryptroot || true
+if lvremove -f /dev/vg/swap 2>/dev/null; then
+    echo "Swap-Volume entfernt."
+fi
+if lvremove -f /dev/vg/root 2>/dev/null; then
+    echo "Root-Volume entfernt."
+fi
+if vgremove -f vg 2>/dev/null; then
+    echo "Volume-Gruppe entfernt."
+fi
+if pvremove -f /dev/mapper/cryptroot 2>/dev/null; then
+    echo "Physical Volume entfernt."
+fi
 
-pvcreate /dev/mapper/cryptroot || { echo "Fehler beim Erstellen von Physical Volume."; exit 1; }
-vgcreate vg /dev/mapper/cryptroot || { echo "Fehler beim Erstellen von Volume Group."; exit 1; }
+if ! pvcreate /dev/mapper/cryptroot; then
+    echo "Fehler beim Erstellen von Physical Volume."
+    exit 1
+fi
 
-lvcreate -L "${swap_size_mb}M" -n swap vg || { echo "Fehler beim Erstellen des Swap-Volumes."; exit 1; }
-lvcreate -L "${root_size_mb}M" -n root vg || { echo "Fehler beim Erstellen des Root-Volumes."; exit 1; }
+if ! vgcreate vg /dev/mapper/cryptroot; then
+    echo "Fehler beim Erstellen von Volume Group."
+    exit 1
+fi
 
-echo "LVM-Volumes erfolgreich erstellt."
+if ! lvcreate -L "${swap_size_mb}M" -n swap vg; then
+    echo "Fehler beim Erstellen des Swap-Volumes."
+    exit 1
+fi
+
+if ! lvcreate -L "${root_size_mb}M" -n root vg; then
+    echo "Fehler beim Erstellen des Root-Volumes."
+    exit 1
+fi
 
 if [[ "$home_size" == "default" ]]; then
-    lvcreate -l 100%FREE -n home vg || { echo "Fehler beim Erstellen der Home-Partition."; exit 1; }
+    if ! lvcreate -l 100%FREE -n home vg; then
+        echo "Fehler beim Erstellen der Home-Partition."
+        exit 1
+    fi
 else
-    lvcreate -L "${home_size_mb}M" -n home vg || { echo "Fehler beim Erstellen der Home-Partition."; exit 1; }
+    if ! lvcreate -L "${home_size_mb}M" -n home vg; then
+        echo "Fehler beim Erstellen der Home-Partition."
+        exit 1
+    fi
 fi
+
+echo "LVM-Volumes erfolgreich erstellt."
 
 echo "Formatiere Dateisysteme..."
 mkfs.ext4 -L ROOT /dev/vg/root || { echo "Fehler beim Formatieren des Root-Dateisystems."; exit 1; }
